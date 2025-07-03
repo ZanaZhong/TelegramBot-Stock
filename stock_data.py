@@ -14,25 +14,24 @@ class StockDataManager:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.last_request_time = 0
-        self.min_request_interval = 5.0  # 大幅增加最小請求間隔（秒）
-        self.max_retries = 2  # 減少重試次數避免過度請求
-        self.retry_delay = 10.0  # 大幅增加重試延遲（秒）
+        self.min_request_interval = 2.0  # 增加最小請求間隔（秒）
+        self.max_retries = 3
+        self.retry_delay = 5.0  # 增加重試延遲（秒）
         
         # 快取機制
         self.cache = {}
-        self.cache_duration = 300  # 大幅增加快取時間（5分鐘）
+        self.cache_duration = 120  # 大幅增加快取時間（2分鐘）
         
         # 全局請求計數器
         self.request_count = 0
         self.max_requests_per_hour = 100  # 每小時最大請求數
         self.hourly_reset_time = time.time() + 3600
         
-        # API 來源列表
+        # API 來源列表（僅免費來源）
         self.api_sources = [
             'yahoo_finance',
-            'alpha_vantage',
-            'finnhub',
-            'polygon'
+            'free_stock_api',
+            'worldtradingdata'
         ]
     
     def _rate_limit(self):
@@ -58,7 +57,7 @@ class StockDataManager:
         if time_since_last < self.min_request_interval:
             sleep_time = self.min_request_interval - time_since_last
             # 添加隨機延遲以避免同時請求
-            sleep_time += random.uniform(1.0, 3.0)  # 增加隨機延遲
+            sleep_time += random.uniform(0.1, 0.5)
             time.sleep(sleep_time)
         
         self.last_request_time = time.time()
@@ -161,43 +160,6 @@ class StockDataManager:
             self.logger.error(f"Yahoo Finance error for {symbol}: {e}")
             return None
     
-    def _get_alpha_vantage_price(self, symbol):
-        """從 Alpha Vantage 取得價格（需要 API key）"""
-        try:
-            # 這裡需要 Alpha Vantage API key
-            api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
-            if not api_key:
-                return None
-            
-            url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}"
-            response = requests.get(url, timeout=10)
-            data = response.json()
-            
-            if 'Global Quote' not in data:
-                return None
-            
-            quote = data['Global Quote']
-            price = float(quote.get('05. price', 0))
-            change = float(quote.get('09. change', 0))
-            change_percent = float(quote.get('10. change percent', '0%').replace('%', ''))
-            volume = int(quote.get('06. volume', 0))
-            
-            return {
-                'symbol': symbol,
-                'price': price,
-                'volume': volume,
-                'change': change,
-                'change_percent': change_percent,
-                'high': price + change * 0.5,  # 估算
-                'low': price - change * 0.5,   # 估算
-                'open': price - change,        # 估算
-                'timestamp': datetime.now(),
-                'source': 'alpha_vantage'
-            }
-        except Exception as e:
-            self.logger.error(f"Alpha Vantage error for {symbol}: {e}")
-            return None
-    
     def _get_free_stock_api_price(self, symbol):
         """從免費的 Stock API 取得價格"""
         try:
@@ -264,96 +226,19 @@ class StockDataManager:
             self.logger.error(f"World Trading Data error for {symbol}: {e}")
             return None
     
-    def _get_finnhub_price(self, symbol):
-        """從 Finnhub 取得價格（需要 API key）"""
-        try:
-            # 這裡需要 Finnhub API key
-            api_key = os.getenv('FINNHUB_API_KEY')
-            if not api_key:
-                return None
-            
-            url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={api_key}"
-            response = requests.get(url, timeout=10)
-            data = response.json()
-            
-            if 'c' not in data or data['c'] == 0:
-                return None
-            
-            current_price = data['c']
-            change = data['d']
-            change_percent = data['dp']
-            high = data['h']
-            low = data['l']
-            open_price = data['o']
-            
-            return {
-                'symbol': symbol,
-                'price': current_price,
-                'volume': 0,  # Finnhub 不提供成交量
-                'change': change,
-                'change_percent': change_percent,
-                'high': high,
-                'low': low,
-                'open': open_price,
-                'timestamp': datetime.now(),
-                'source': 'finnhub'
-            }
-        except Exception as e:
-            self.logger.error(f"Finnhub error for {symbol}: {e}")
-            return None
-    
-    def _get_polygon_price(self, symbol):
-        """從 Polygon 取得價格（需要 API key）"""
-        try:
-            # 這裡需要 Polygon API key
-            api_key = os.getenv('POLYGON_API_KEY')
-            if not api_key:
-                return None
-            
-            url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/prev?adjusted=true&apiKey={api_key}"
-            response = requests.get(url, timeout=10)
-            data = response.json()
-            
-            if 'results' not in data or not data['results']:
-                return None
-            
-            result = data['results'][0]
-            price = result['c']
-            change = result['c'] - result['o']
-            change_percent = (change / result['o']) * 100
-            
-            return {
-                'symbol': symbol,
-                'price': price,
-                'volume': result['v'],
-                'change': change,
-                'change_percent': change_percent,
-                'high': result['h'],
-                'low': result['l'],
-                'open': result['o'],
-                'timestamp': datetime.now(),
-                'source': 'polygon'
-            }
-        except Exception as e:
-            self.logger.error(f"Polygon error for {symbol}: {e}")
-            return None
-    
     def get_current_price(self, symbol):
-        """取得即時股價 - 使用多個 API 來源"""
+        """取得即時股價 - 使用多個免費 API 來源"""
         try:
             cache_key = self._get_cache_key(symbol, "price")
             cached_data = self._get_from_cache(cache_key)
             if cached_data:
                 return cached_data
             
-            # 嘗試不同的 API 來源（按優先順序）
+            # 嘗試不同的免費 API 來源（按優先順序）
             api_functions = [
                 self._get_yahoo_finance_price,      # 主要來源
                 self._get_free_stock_api_price,     # 免費備用
-                self._get_worldtradingdata_price,   # 免費備用
-                self._get_alpha_vantage_price,      # 需要 API key
-                self._get_finnhub_price,            # 需要 API key
-                self._get_polygon_price             # 需要 API key
+                self._get_worldtradingdata_price    # 免費備用
             ]
             
             for api_func in api_functions:
