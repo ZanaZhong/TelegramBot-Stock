@@ -1,1 +1,1 @@
-python-3.11.18 
+# 移除 runtime.txt 讓 Render 使用預設的 Python 3.13 
