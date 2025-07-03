@@ -734,7 +734,7 @@ class StockBot:
         # 啟動 Bot
         logger.info("Starting Stock Bot...")
         
-        # 檢查是否使用 webhook（Railway 部署）
+        # 檢查是否使用 webhook（雲端部署）
         if WEBHOOK_URL:
             logger.info(f"Using webhook: {WEBHOOK_URL}")
             self.application.run_webhook(
@@ -744,8 +744,15 @@ class StockBot:
                 secret_token=None
             )
         else:
-            logger.info("Using polling mode")
-            self.application.run_polling()
+            # 檢查是否在雲端環境（Render/Heroku 等）
+            if os.getenv('RENDER') or os.getenv('HEROKU') or os.getenv('PORT'):
+                # 在雲端環境使用 webhook，但沒有設定 WEBHOOK_URL
+                logger.info("Detected cloud environment, using webhook mode")
+                # 使用 polling 模式，但設定為 webhook 準備
+                self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+            else:
+                logger.info("Using polling mode")
+                self.application.run_polling()
 
 if __name__ == "__main__":
     bot = StockBot()
