@@ -181,7 +181,7 @@ class StockBot:
             current_price = self.stock_manager.get_current_price(symbol)
             
             if not current_price:
-                update.message.reply_text(f"❌ 無法取得 {symbol} 的價格資訊")
+                update.message.reply_text(f"❌ 無法取得 {symbol} 的價格資訊\n\n🔍 可能原因：\n• 股票代碼錯誤\n• 所有 API 來源暫時無法使用\n• 網路連線問題\n\n請稍後再試或檢查股票代碼是否正確")
                 return
             
             # 決定表情符號
@@ -203,6 +203,9 @@ class StockBot:
 • 最高: ${current_price['high']:.2f}
 • 最低: ${current_price['low']:.2f}
 • 成交量: {current_price['volume']:,}
+
+📡 **資料來源:** {current_price.get('source', 'Unknown')}
+⏰ **更新時間:** {current_price['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
             """
             
             update.message.reply_text(message)
