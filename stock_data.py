@@ -15,7 +15,7 @@ class StockDataManager:
         self.logger = logging.getLogger(__name__)
         self.last_request_time = 0
         self.min_request_interval = 10.0  # 增加最小請求間隔到10秒
-        self.max_retries = 1  # 減少重試次數避免過度請求
+        self.max_retries = 0  # 不重試，直接失敗讓 fallback 機制工作
         self.retry_delay = 30.0  # 大幅增加重試延遲到30秒
         
         # 快取機制
@@ -96,7 +96,7 @@ class StockDataManager:
     
     def _make_request_with_retry(self, func, *args, **kwargs):
         """帶重試機制的請求"""
-        for attempt in range(self.max_retries):
+        for attempt in range(self.max_retries + 1):  # +1 因為 range(1) 只會執行一次
             try:
                 self._rate_limit()
                 result = func(*args, **kwargs)
@@ -105,23 +105,20 @@ class StockDataManager:
                 if result is not None and not (hasattr(result, 'empty') and result.empty):
                     return result
                 else:
-                    self.logger.warning(f"Empty result received, attempt {attempt + 1}/{self.max_retries}")
+                    self.logger.warning(f"Empty result received, attempt {attempt + 1}/{self.max_retries + 1}")
                     
             except Exception as e:
                 error_str = str(e).lower()
                 
                 # 檢測各種錯誤類型
                 if any(keyword in error_str for keyword in ["429", "too many requests", "rate limit"]):
-                    self.logger.warning(f"Rate limit hit, attempt {attempt + 1}/{self.max_retries}")
-                    if attempt < self.max_retries - 1:
-                        # 指數退避
-                        delay = self.retry_delay * (2 ** attempt)
-                        time.sleep(delay)
-                        continue
+                    self.logger.warning(f"Rate limit hit, attempt {attempt + 1}/{self.max_retries + 1}")
+                    # 遇到 rate limit 立即返回 None，讓 fallback 機制工作
+                    return None
                         
                 elif any(keyword in error_str for keyword in ["expecting value", "json", "parse"]):
-                    self.logger.warning(f"JSON parsing error, attempt {attempt + 1}/{self.max_retries}")
-                    if attempt < self.max_retries - 1:
+                    self.logger.warning(f"JSON parsing error, attempt {attempt + 1}/{self.max_retries + 1}")
+                    if attempt < self.max_retries:
                         # JSON 錯誤時等待更長時間
                         delay = self.retry_delay * (3 ** attempt)
                         time.sleep(delay)
@@ -136,7 +133,7 @@ class StockDataManager:
     
     def _get_yahoo_finance_price(self, symbol):
         """從 Yahoo Finance 取得價格"""
-        try:
+        def _get_price():
             ticker = yf.Ticker(symbol)
             
             # 嘗試不同的期間來取得資料
@@ -169,10 +166,8 @@ class StockDataManager:
             
             self.logger.error(f"All Yahoo Finance periods failed for {symbol}")
             return None
-            
-        except Exception as e:
-            self.logger.error(f"Yahoo Finance error for {symbol}: {e}")
-            return None
+        
+        return self._make_request_with_retry(_get_price)
     
     def _get_iex_cloud_price(self, symbol):
         """從 IEX Cloud 取得價格（免費版）"""
