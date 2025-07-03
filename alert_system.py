@@ -13,27 +13,25 @@ class AlertSystem:
         self.logger = logging.getLogger(__name__)
         self.is_running = False
     
-    def start_monitoring(self):
+    async def start_monitoring(self):
         """開始監控警報"""
         self.is_running = True
         self.logger.info("Alert system started")
         
         while self.is_running:
             try:
-                self.check_alerts()
-                import time
-                time.sleep(ALERT_CHECK_INTERVAL)
+                await self.check_alerts()
+                await asyncio.sleep(ALERT_CHECK_INTERVAL)
             except Exception as e:
                 self.logger.error(f"Error in alert monitoring: {e}")
-                import time
-                time.sleep(ALERT_CHECK_INTERVAL)
+                await asyncio.sleep(ALERT_CHECK_INTERVAL)
     
     async def stop_monitoring(self):
         """停止監控"""
         self.is_running = False
         self.logger.info("Alert system stopped")
     
-    def check_alerts(self):
+    async def check_alerts(self):
         """檢查所有警報"""
         try:
             # 取得所有活躍警報
@@ -52,12 +50,12 @@ class AlertSystem:
             conn.close()
             
             for user_id, symbol in active_alerts:
-                self.check_user_alerts(user_id, symbol)
+                await self.check_user_alerts(user_id, symbol)
                 
         except Exception as e:
             self.logger.error(f"Error checking alerts: {e}")
     
-    def check_user_alerts(self, user_id, symbol):
+    async def check_user_alerts(self, user_id, symbol):
         """檢查特定用戶的股票警報"""
         try:
             # 取得當前價格
@@ -121,14 +119,14 @@ class AlertSystem:
                             message = f"🌊 {symbol} 波動率達到 {volatility:.1f}%！\n當前價格: ${current_price:.2f}"
                 
                 if triggered:
-                    self.send_alert(user_id, message, symbol)
+                    await self.send_alert(user_id, message, symbol)
                     # 暫時停用警報避免重複發送
-                    self.disable_alert_temporarily(user_id, symbol, alert_type)
+                    await self.disable_alert_temporarily(user_id, symbol, alert_type)
         
         except Exception as e:
             self.logger.error(f"Error checking alerts for {user_id} {symbol}: {e}")
     
-    def send_alert(self, user_id, message, symbol):
+    async def send_alert(self, user_id, message, symbol):
         """發送警報訊息"""
         try:
             # 取得股票資訊
@@ -145,7 +143,7 @@ class AlertSystem:
                     message += f"• {signal}\n"
             
             # 發送訊息
-            self.bot.send_message(
+            await self.bot.send_message(
                 chat_id=user_id,
                 text=message,
                 parse_mode='Markdown'
@@ -156,7 +154,7 @@ class AlertSystem:
         except Exception as e:
             self.logger.error(f"Error sending alert to {user_id}: {e}")
     
-    def disable_alert_temporarily(self, user_id, symbol, alert_type):
+    async def disable_alert_temporarily(self, user_id, symbol, alert_type):
         """暫時停用警報避免重複發送"""
         try:
             conn = sqlite3.connect(self.db.db_path)
@@ -172,20 +170,14 @@ class AlertSystem:
             conn.close()
             
             # 30分鐘後重新啟用
-            import threading
-            import time
-            def re_enable():
-                time.sleep(1800)
-                self.re_enable_alert(user_id, symbol, alert_type, delay=1800)
-            threading.Thread(target=re_enable, daemon=True).start()
+            asyncio.create_task(self.re_enable_alert(user_id, symbol, alert_type, delay=1800))
             
         except Exception as e:
             self.logger.error(f"Error disabling alert: {e}")
     
-    def re_enable_alert(self, user_id, symbol, alert_type, delay=1800):
+    async def re_enable_alert(self, user_id, symbol, alert_type, delay=1800):
         """重新啟用警報"""
-        import time
-        time.sleep(delay)
+        await asyncio.sleep(delay)
         
         try:
             conn = sqlite3.connect(self.db.db_path)
