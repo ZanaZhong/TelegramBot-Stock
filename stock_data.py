@@ -14,24 +14,24 @@ class StockDataManager:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.last_request_time = 0
-        self.min_request_interval = 2.0  # 增加最小請求間隔（秒）
-        self.max_retries = 3
-        self.retry_delay = 5.0  # 增加重試延遲（秒）
+        self.min_request_interval = 10.0  # 增加最小請求間隔到10秒
+        self.max_retries = 1  # 減少重試次數避免過度請求
+        self.retry_delay = 30.0  # 大幅增加重試延遲到30秒
         
         # 快取機制
         self.cache = {}
-        self.cache_duration = 120  # 大幅增加快取時間（2分鐘）
+        self.cache_duration = 600  # 增加快取時間到10分鐘
         
         # 全局請求計數器
         self.request_count = 0
-        self.max_requests_per_hour = 100  # 每小時最大請求數
+        self.max_requests_per_hour = 50  # 減少每小時最大請求數
         self.hourly_reset_time = time.time() + 3600
         
-        # API 來源列表（僅免費來源）
+        # API 來源列表（僅穩定可用的免費來源）
         self.api_sources = [
             'yahoo_finance',
-            'free_stock_api',
-            'worldtradingdata'
+            'iex_cloud',
+            'alpha_vantage_free'
         ]
     
     def _rate_limit(self):
@@ -138,44 +138,64 @@ class StockDataManager:
         """從 Yahoo Finance 取得價格"""
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period='1d')
             
-            if hist is None or hist.empty:
-                return None
+            # 嘗試不同的期間來取得資料
+            periods = ['1d', '5d', '1mo']
             
-            latest = hist.iloc[-1]
-            return {
-                'symbol': symbol,
-                'price': float(latest['Close']),
-                'volume': int(latest['Volume']),
-                'change': float(latest['Close'] - latest['Open']),
-                'change_percent': float((latest['Close'] - latest['Open']) / latest['Open'] * 100),
-                'high': float(latest['High']),
-                'low': float(latest['Low']),
-                'open': float(latest['Open']),
-                'timestamp': datetime.now(),
-                'source': 'yahoo_finance'
-            }
+            for period in periods:
+                try:
+                    hist = ticker.history(period=period)
+                    
+                    if hist is not None and not hist.empty:
+                        latest = hist.iloc[-1]
+                        
+                        # 檢查資料是否有效
+                        if latest['Close'] > 0:
+                            return {
+                                'symbol': symbol,
+                                'price': float(latest['Close']),
+                                'volume': int(latest['Volume']),
+                                'change': float(latest['Close'] - latest['Open']),
+                                'change_percent': float((latest['Close'] - latest['Open']) / latest['Open'] * 100),
+                                'high': float(latest['High']),
+                                'low': float(latest['Low']),
+                                'open': float(latest['Open']),
+                                'timestamp': datetime.now(),
+                                'source': 'yahoo_finance'
+                            }
+                except Exception as e:
+                    self.logger.warning(f"Yahoo Finance period {period} failed for {symbol}: {e}")
+                    continue
+            
+            self.logger.error(f"All Yahoo Finance periods failed for {symbol}")
+            return None
+            
         except Exception as e:
             self.logger.error(f"Yahoo Finance error for {symbol}: {e}")
             return None
     
-    def _get_free_stock_api_price(self, symbol):
-        """從免費的 Stock API 取得價格"""
+    def _get_iex_cloud_price(self, symbol):
+        """從 IEX Cloud 取得價格（免費版）"""
         try:
-            # 使用免費的 Stock API
-            url = f"https://api.stockdata.org/v1/data/quote?symbols={symbol}&api_token=free"
-            response = requests.get(url, timeout=10)
+            # 使用 IEX Cloud 免費 API
+            url = f"https://cloud.iexapis.com/stable/stock/{symbol}/quote?token=pk_test"
+            response = requests.get(url, timeout=15)
+            
+            if response.status_code != 200:
+                return None
+                
             data = response.json()
             
-            if 'data' not in data or not data['data']:
+            if 'latestPrice' not in data:
                 return None
             
-            quote = data['data'][0]
-            price = float(quote.get('price', 0))
-            change = float(quote.get('change', 0))
-            change_percent = float(quote.get('change_percent', 0))
-            volume = int(quote.get('volume', 0))
+            price = float(data.get('latestPrice', 0))
+            change = float(data.get('change', 0))
+            change_percent = float(data.get('changePercent', 0)) * 100
+            volume = int(data.get('volume', 0))
+            high = float(data.get('high', price))
+            low = float(data.get('low', price))
+            open_price = float(data.get('open', price))
             
             return {
                 'symbol': symbol,
@@ -183,77 +203,85 @@ class StockDataManager:
                 'volume': volume,
                 'change': change,
                 'change_percent': change_percent,
-                'high': float(quote.get('high', price)),
-                'low': float(quote.get('low', price)),
-                'open': float(quote.get('open', price)),
+                'high': high,
+                'low': low,
+                'open': open_price,
                 'timestamp': datetime.now(),
-                'source': 'free_stock_api'
+                'source': 'iex_cloud'
             }
         except Exception as e:
-            self.logger.error(f"Free Stock API error for {symbol}: {e}")
+            self.logger.error(f"IEX Cloud error for {symbol}: {e}")
             return None
     
-    def _get_worldtradingdata_price(self, symbol):
-        """從 World Trading Data 取得價格（免費版）"""
+    def _get_alpha_vantage_free_price(self, symbol):
+        """從 Alpha Vantage 免費版取得價格"""
         try:
-            # 使用免費的 World Trading Data API
-            api_key = os.getenv('WORLDTRADINGDATA_API_KEY', 'demo')
-            url = f"https://api.worldtradingdata.com/api/v1/stock?symbol={symbol}&api_token={api_key}"
-            response = requests.get(url, timeout=10)
+            # 使用 Alpha Vantage 免費 API（每分鐘5次請求）
+            api_key = "AJOZ00DM4XIUIWWZ"
+            url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}"
+            response = requests.get(url, timeout=15)
             data = response.json()
             
-            if 'data' not in data or not data['data']:
+            if 'Global Quote' not in data or not data['Global Quote']:
                 return None
             
-            quote = data['data'][0]
-            price = float(quote.get('price', 0))
-            change = float(quote.get('change_pct', 0))
-            volume = int(quote.get('volume', 0))
+            quote = data['Global Quote']
+            price = float(quote.get('05. price', 0))
+            change = float(quote.get('09. change', 0))
+            change_percent = float(quote.get('10. change percent', '0%').replace('%', ''))
+            volume = int(quote.get('06. volume', 0))
             
             return {
                 'symbol': symbol,
                 'price': price,
                 'volume': volume,
-                'change': price * change / 100,  # 估算變化量
-                'change_percent': change,
-                'high': float(quote.get('day_high', price)),
-                'low': float(quote.get('day_low', price)),
-                'open': float(quote.get('day_open', price)),
+                'change': change,
+                'change_percent': change_percent,
+                'high': price + change * 0.5,  # 估算
+                'low': price - change * 0.5,   # 估算
+                'open': price - change,        # 估算
                 'timestamp': datetime.now(),
-                'source': 'worldtradingdata'
+                'source': 'alpha_vantage_free'
             }
         except Exception as e:
-            self.logger.error(f"World Trading Data error for {symbol}: {e}")
+            self.logger.error(f"Alpha Vantage Free error for {symbol}: {e}")
             return None
     
     def get_current_price(self, symbol):
-        """取得即時股價 - 使用多個免費 API 來源"""
+        """取得即時股價 - 優先使用 Yahoo Finance，備用 Alpha Vantage"""
         try:
             cache_key = self._get_cache_key(symbol, "price")
             cached_data = self._get_from_cache(cache_key)
             if cached_data:
                 return cached_data
             
-            # 嘗試不同的免費 API 來源（按優先順序）
-            api_functions = [
-                self._get_yahoo_finance_price,      # 主要來源
-                self._get_free_stock_api_price,     # 免費備用
-                self._get_worldtradingdata_price    # 免費備用
-            ]
+            # 優先使用 Yahoo Finance
+            result = self._get_yahoo_finance_price(symbol)
             
-            for api_func in api_functions:
-                try:
-                    self._rate_limit()
-                    result = api_func(symbol)
-                    if result:
-                        self.logger.info(f"Successfully got price for {symbol} from {result['source']}")
-                        self._set_cache(cache_key, result)
-                        return result
-                except Exception as e:
-                    self.logger.warning(f"API {api_func.__name__} failed for {symbol}: {e}")
-                    continue
+            if result:
+                self.logger.info(f"✅ Successfully got price for {symbol} from {result['source']}")
+                self._set_cache(cache_key, result)
+                return result
             
-            self.logger.error(f"All API sources failed for {symbol}")
+            # 如果 Yahoo Finance 失敗，優先使用 Alpha Vantage
+            self.logger.warning(f"Yahoo Finance failed for {symbol}, trying Alpha Vantage...")
+            result = self._get_alpha_vantage_free_price(symbol)
+            
+            if result:
+                self.logger.info(f"✅ Successfully got price for {symbol} from {result['source']}")
+                self._set_cache(cache_key, result)
+                return result
+            
+            # 最後嘗試 IEX Cloud
+            self.logger.warning(f"Alpha Vantage failed for {symbol}, trying IEX Cloud...")
+            result = self._get_iex_cloud_price(symbol)
+            
+            if result:
+                self.logger.info(f"✅ Successfully got price for {symbol} from {result['source']}")
+                self._set_cache(cache_key, result)
+                return result
+            
+            self.logger.error(f"❌ All API sources failed for {symbol}")
             return None
             
         except Exception as e:
