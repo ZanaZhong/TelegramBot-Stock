@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from database import Database
@@ -19,12 +20,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 環境變數設定
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', TELEGRAM_TOKEN)
+PORT = int(os.getenv('PORT', 8000))
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', None)
+
 class StockBot:
     def __init__(self):
         self.db = Database()
         self.stock_manager = StockDataManager()
         self.chart_generator = ChartGenerator()
         self.alert_system = None
+        self.application = None
         
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """開始命令"""
@@ -702,31 +709,43 @@ class StockBot:
     def run(self):
         """運行 Bot"""
         # 建立應用程式
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
+        self.application = Application.builder().token(TELEGRAM_TOKEN).build()
         
         # 初始化警報系統
-        self.alert_system = AlertSystem(application.bot)
+        self.alert_system = AlertSystem(self.application.bot)
         
         # 註冊命令處理器
-        application.add_handler(CommandHandler("start", self.start))
-        application.add_handler(CommandHandler("help", self.help_command))
-        application.add_handler(CommandHandler("stock", self.stock_command))
-        application.add_handler(CommandHandler("price", self.price_command))
-        application.add_handler(CommandHandler("watchlist", self.watchlist_command))
-        application.add_handler(CommandHandler("add", self.add_command))
-        application.add_handler(CommandHandler("remove", self.remove_command))
-        application.add_handler(CommandHandler("alerts", self.alerts_command))
-        application.add_handler(CommandHandler("personality", self.personality_command))
-        application.add_handler(CommandHandler("strategy", self.strategy_command))
-        application.add_handler(CommandHandler("chart", self.chart_command))
-        application.add_handler(CommandHandler("compare", self.compare_command))
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("help", self.help_command))
+        self.application.add_handler(CommandHandler("stock", self.stock_command))
+        self.application.add_handler(CommandHandler("price", self.price_command))
+        self.application.add_handler(CommandHandler("watchlist", self.watchlist_command))
+        self.application.add_handler(CommandHandler("add", self.add_command))
+        self.application.add_handler(CommandHandler("remove", self.remove_command))
+        self.application.add_handler(CommandHandler("alerts", self.alerts_command))
+        self.application.add_handler(CommandHandler("personality", self.personality_command))
+        self.application.add_handler(CommandHandler("strategy", self.strategy_command))
+        self.application.add_handler(CommandHandler("chart", self.chart_command))
+        self.application.add_handler(CommandHandler("compare", self.compare_command))
         
         # 註冊按鈕回調處理器
-        application.add_handler(CallbackQueryHandler(self.button_callback))
+        self.application.add_handler(CallbackQueryHandler(self.button_callback))
         
         # 啟動 Bot
         logger.info("Starting Stock Bot...")
-        application.run_polling()
+        
+        # 檢查是否使用 webhook（Railway 部署）
+        if WEBHOOK_URL:
+            logger.info(f"Using webhook: {WEBHOOK_URL}")
+            self.application.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                webhook_url=WEBHOOK_URL,
+                secret_token=None
+            )
+        else:
+            logger.info("Using polling mode")
+            self.application.run_polling()
 
 if __name__ == "__main__":
     bot = StockBot()
