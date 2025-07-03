@@ -2,7 +2,7 @@ import logging
 import asyncio
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
 from database import Database
 from stock_data import StockDataManager
 from alert_system import AlertSystem
@@ -31,9 +31,9 @@ class StockBot:
         self.stock_manager = StockDataManager()
         self.chart_generator = ChartGenerator()
         self.alert_system = None
-        self.application = None
+        self.updater = None
         
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def start(self, update: Update, context):
         """開始命令"""
         user = update.effective_user
         
@@ -67,9 +67,9 @@ class StockBot:
 開始你的投資之旅吧！ 🚀
         """
         
-        await update.message.reply_text(welcome_message)
+        update.message.reply_text(welcome_message)
     
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def help_command(self, update: Update, context):
         """幫助命令"""
         help_text = """
 📚 **股票 Bot 使用指南**
@@ -110,18 +110,18 @@ class StockBot:
 • 🔥 相關性熱力圖：多股票比較
         """
         
-        await update.message.reply_text(help_text)
+        update.message.reply_text(help_text)
     
-    async def stock_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def stock_command(self, update: Update, context):
         """股票查詢命令"""
         if not context.args:
-            await update.message.reply_text("請輸入股票代碼，例如: /stock AAPL")
+            update.message.reply_text("請輸入股票代碼，例如: /stock AAPL")
             return
         
         symbol = context.args[0].upper()
         
         # 顯示載入訊息
-        loading_msg = await update.message.reply_text("🔍 正在查詢股票資訊...")
+        loading_msg = update.message.reply_text("🔍 正在查詢股票資訊...")
         
         try:
             # 取得股票資訊
@@ -129,7 +129,7 @@ class StockBot:
             current_price = self.stock_manager.get_current_price(symbol)
             
             if not stock_info or not current_price:
-                await loading_msg.edit_text(f"❌ 無法取得 {symbol} 的資訊，請檢查股票代碼是否正確")
+                loading_msg.edit_text(f"❌ 無法取得 {symbol} 的資訊，請檢查股票代碼是否正確")
                 return
             
             # 格式化訊息
@@ -163,16 +163,16 @@ class StockBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await loading_msg.edit_text(message, reply_markup=reply_markup)
+            loading_msg.edit_text(message, reply_markup=reply_markup)
             
         except Exception as e:
             logger.error(f"Error in stock command: {e}")
-            await loading_msg.edit_text("❌ 查詢股票時發生錯誤")
+            loading_msg.edit_text("❌ 查詢股票時發生錯誤")
     
-    async def price_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def price_command(self, update: Update, context):
         """即時股價命令"""
         if not context.args:
-            await update.message.reply_text("請輸入股票代碼，例如: /price AAPL")
+            update.message.reply_text("請輸入股票代碼，例如: /price AAPL")
             return
         
         symbol = context.args[0].upper()
@@ -181,7 +181,7 @@ class StockBot:
             current_price = self.stock_manager.get_current_price(symbol)
             
             if not current_price:
-                await update.message.reply_text(f"❌ 無法取得 {symbol} 的價格資訊")
+                update.message.reply_text(f"❌ 無法取得 {symbol} 的價格資訊")
                 return
             
             # 決定表情符號
@@ -205,19 +205,19 @@ class StockBot:
 • 成交量: {current_price['volume']:,}
             """
             
-            await update.message.reply_text(message)
+            update.message.reply_text(message)
             
         except Exception as e:
             logger.error(f"Error in price command: {e}")
-            await update.message.reply_text("❌ 查詢價格時發生錯誤")
+            update.message.reply_text("❌ 查詢價格時發生錯誤")
     
-    async def watchlist_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def watchlist_command(self, update: Update, context):
         """追蹤清單命令"""
         user_id = update.effective_user.id
         watchlist = self.db.get_user_watchlist(user_id)
         
         if not watchlist:
-            await update.message.reply_text("您目前沒有追蹤任何股票。\n使用 /add <代碼> 來新增股票到追蹤清單")
+            update.message.reply_text("您目前沒有追蹤任何股票。\n使用 /add <代碼> 來新增股票到追蹤清單")
             return
         
         message = "⭐ **您的追蹤清單:**\n\n"
@@ -239,12 +239,12 @@ class StockBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+        update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
     
-    async def add_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def add_command(self, update: Update, context):
         """新增追蹤命令"""
         if not context.args:
-            await update.message.reply_text("請輸入股票代碼，例如: /add AAPL")
+            update.message.reply_text("請輸入股票代碼，例如: /add AAPL")
             return
         
         user_id = update.effective_user.id
@@ -254,25 +254,25 @@ class StockBot:
             # 驗證股票代碼
             stock_info = self.stock_manager.get_stock_info(symbol)
             if not stock_info:
-                await update.message.reply_text(f"❌ 無效的股票代碼: {symbol}")
+                update.message.reply_text(f"❌ 無效的股票代碼: {symbol}")
                 return
             
             # 新增到追蹤清單
             success = self.db.add_stock_to_watchlist(user_id, symbol, stock_info['name'])
             
             if success:
-                await update.message.reply_text(f"✅ 已將 {symbol} ({stock_info['name']}) 新增到追蹤清單")
+                update.message.reply_text(f"✅ 已將 {symbol} ({stock_info['name']}) 新增到追蹤清單")
             else:
-                await update.message.reply_text(f"ℹ️ {symbol} 已在追蹤清單中")
+                update.message.reply_text(f"ℹ️ {symbol} 已在追蹤清單中")
                 
         except Exception as e:
             logger.error(f"Error in add command: {e}")
-            await update.message.reply_text("❌ 新增追蹤時發生錯誤")
+            update.message.reply_text("❌ 新增追蹤時發生錯誤")
     
-    async def remove_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def remove_command(self, update: Update, context):
         """移除追蹤命令"""
         if not context.args:
-            await update.message.reply_text("請輸入股票代碼，例如: /remove AAPL")
+            update.message.reply_text("請輸入股票代碼，例如: /remove AAPL")
             return
         
         user_id = update.effective_user.id
@@ -280,13 +280,13 @@ class StockBot:
         
         try:
             self.db.remove_stock_from_watchlist(user_id, symbol)
-            await update.message.reply_text(f"✅ 已從追蹤清單移除 {symbol}")
+            update.message.reply_text(f"✅ 已從追蹤清單移除 {symbol}")
             
         except Exception as e:
             logger.error(f"Error in remove command: {e}")
-            await update.message.reply_text("❌ 移除追蹤時發生錯誤")
+            update.message.reply_text("❌ 移除追蹤時發生錯誤")
     
-    async def alerts_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def alerts_command(self, update: Update, context):
         """警報命令"""
         user_id = update.effective_user.id
         alert_summary = self.alert_system.get_user_alert_summary(user_id)
@@ -299,9 +299,9 @@ class StockBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(alert_summary, reply_markup=reply_markup, parse_mode='Markdown')
+        update.message.reply_text(alert_summary, reply_markup=reply_markup, parse_mode='Markdown')
     
-    async def personality_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def personality_command(self, update: Update, context):
         """投資人格測驗命令"""
         message = """
 🎯 **投資人格測驗**
@@ -326,12 +326,12 @@ class StockBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(message, reply_markup=reply_markup)
+        update.message.reply_text(message, reply_markup=reply_markup)
     
-    async def strategy_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def strategy_command(self, update: Update, context):
         """策略建議命令"""
         if not context.args:
-            await update.message.reply_text("請輸入股票代碼，例如: /strategy AAPL")
+            update.message.reply_text("請輸入股票代碼，例如: /strategy AAPL")
             return
         
         symbol = context.args[0].upper()
@@ -341,13 +341,13 @@ class StockBot:
         user = self.db.get_user(user_id)
         personality = user[4] if user else '上班族型交易者'
         
-        loading_msg = await update.message.reply_text("🎯 正在分析投資策略...")
+        loading_msg = update.message.reply_text("🎯 正在分析投資策略...")
         
         try:
             analysis = self.stock_manager.get_stock_analysis(symbol, personality)
             
             if not analysis:
-                await loading_msg.edit_text(f"❌ 無法分析 {symbol} 的策略")
+                loading_msg.edit_text(f"❌ 無法分析 {symbol} 的策略")
                 return
             
             # 修正 f-string 條件語法
@@ -375,58 +375,58 @@ class StockBot:
             
             message += f"\n💡 **建議:** {analysis['recommendation']}"
             
-            await loading_msg.edit_text(message)
+            loading_msg.edit_text(message)
             
         except Exception as e:
             logger.error(f"Error in strategy command: {e}")
-            await loading_msg.edit_text("❌ 分析策略時發生錯誤")
+            loading_msg.edit_text("❌ 分析策略時發生錯誤")
     
-    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def button_callback(self, update: Update, context):
         """按鈕回調處理"""
         query = update.callback_query
-        await query.answer()
+        query.answer()
         
         data = query.data
         
         if data.startswith("analysis_"):
             symbol = data.split("_")[1]
-            await self.handle_analysis_callback(query, symbol)
+            self.handle_analysis_callback(query, symbol)
         
         elif data.startswith("add_watch_"):
             symbol = data.split("_")[2]
-            await self.handle_add_watch_callback(query, symbol)
+            self.handle_add_watch_callback(query, symbol)
         
         elif data.startswith("alert_"):
             symbol = data.split("_")[1]
-            await self.handle_alert_callback(query, symbol)
+            self.handle_alert_callback(query, symbol)
         
         elif data.startswith("chart_"):
             symbol = data.split("_")[1]
-            await self.handle_chart_callback(query, symbol)
+            self.handle_chart_callback(query, symbol)
         
         elif data.startswith("personality_"):
             personality = data.split("_", 1)[1]
-            await self.handle_personality_callback(query, personality)
+            self.handle_personality_callback(query, personality)
         
         elif data == "refresh_watchlist":
-            await self.handle_refresh_watchlist_callback(query)
+            self.handle_refresh_watchlist_callback(query)
         
         elif data == "add_stock":
-            await self.handle_add_stock_callback(query)
+            self.handle_add_stock_callback(query)
     
-    async def handle_analysis_callback(self, query, symbol):
+    def handle_analysis_callback(self, query, symbol):
         """處理技術分析回調"""
         user_id = query.from_user.id
         user = self.db.get_user(user_id)
         personality = user[4] if user else '上班族型交易者'
         
-        await query.edit_message_text("📊 正在進行技術分析...")
+        query.edit_message_text("📊 正在進行技術分析...")
         
         try:
             analysis = self.stock_manager.get_stock_analysis(symbol, personality)
             
             if not analysis:
-                await query.edit_message_text(f"❌ 無法分析 {symbol}")
+                query.edit_message_text(f"❌ 無法分析 {symbol}")
                 return
             
             # 修正 f-string 條件語法
@@ -461,34 +461,34 @@ class StockBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(message, reply_markup=reply_markup)
+            query.edit_message_text(message, reply_markup=reply_markup)
             
         except Exception as e:
             logger.error(f"Error in analysis callback: {e}")
-            await query.edit_message_text("❌ 技術分析時發生錯誤")
+            query.edit_message_text("❌ 技術分析時發生錯誤")
     
-    async def handle_add_watch_callback(self, query, symbol):
+    def handle_add_watch_callback(self, query, symbol):
         """處理新增追蹤回調"""
         user_id = query.from_user.id
         
         try:
             stock_info = self.stock_manager.get_stock_info(symbol)
             if not stock_info:
-                await query.edit_message_text(f"❌ 無效的股票代碼: {symbol}")
+                query.edit_message_text(f"❌ 無效的股票代碼: {symbol}")
                 return
             
             success = self.db.add_stock_to_watchlist(user_id, symbol, stock_info['name'])
             
             if success:
-                await query.edit_message_text(f"✅ 已將 {symbol} 新增到追蹤清單")
+                query.edit_message_text(f"✅ 已將 {symbol} 新增到追蹤清單")
             else:
-                await query.edit_message_text(f"ℹ️ {symbol} 已在追蹤清單中")
+                query.edit_message_text(f"ℹ️ {symbol} 已在追蹤清單中")
                 
         except Exception as e:
             logger.error(f"Error in add watch callback: {e}")
-            await query.edit_message_text("❌ 新增追蹤時發生錯誤")
+            query.edit_message_text("❌ 新增追蹤時發生錯誤")
     
-    async def handle_alert_callback(self, query, symbol):
+    def handle_alert_callback(self, query, symbol):
         """處理警報回調"""
         message = f"""
 🔔 **設定 {symbol} 警報**
@@ -516,9 +516,9 @@ class StockBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(message, reply_markup=reply_markup)
+        query.edit_message_text(message, reply_markup=reply_markup)
     
-    async def handle_personality_callback(self, query, personality):
+    def handle_personality_callback(self, query, personality):
         """處理投資人格回調"""
         user_id = query.from_user.id
         
@@ -544,19 +544,19 @@ class StockBot:
 開始您的投資之旅吧！ 🚀
             """
             
-            await query.edit_message_text(message)
+            query.edit_message_text(message)
             
         except Exception as e:
             logger.error(f"Error in personality callback: {e}")
-            await query.edit_message_text("❌ 設定投資人格時發生錯誤")
+            query.edit_message_text("❌ 設定投資人格時發生錯誤")
     
-    async def handle_refresh_watchlist_callback(self, query):
+    def handle_refresh_watchlist_callback(self, query):
         """處理重新整理追蹤清單回調"""
         user_id = query.from_user.id
         watchlist = self.db.get_user_watchlist(user_id)
         
         if not watchlist:
-            await query.edit_message_text("您目前沒有追蹤任何股票。\n使用 /add <代碼> 來新增股票到追蹤清單")
+            query.edit_message_text("您目前沒有追蹤任何股票。\n使用 /add <代碼> 來新增股票到追蹤清單")
             return
         
         message = "⭐ **您的追蹤清單:**\n\n"
@@ -576,15 +576,15 @@ class StockBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+        query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
     
-    async def handle_add_stock_callback(self, query):
+    def handle_add_stock_callback(self, query):
         """處理新增股票回調"""
-        await query.edit_message_text("請使用 /add <股票代碼> 來新增股票到追蹤清單\n\n例如: /add AAPL")
+        query.edit_message_text("請使用 /add <股票代碼> 來新增股票到追蹤清單\n\n例如: /add AAPL")
     
-    async def handle_chart_callback(self, query, symbol):
+    def handle_chart_callback(self, query, symbol):
         """處理圖表回調"""
-        await query.edit_message_text("📈 正在生成圖表...")
+        query.edit_message_text("📈 正在生成圖表...")
         
         try:
             # 生成價格走勢圖
@@ -592,7 +592,7 @@ class StockBot:
             
             if price_chart:
                 # 發送圖片
-                await query.message.reply_photo(
+                query.message.reply_photo(
                     photo=price_chart,
                     caption=f"📊 {symbol} 價格走勢圖 (1個月)\n\n包含：價格走勢、移動平均線、成交量"
                 )
@@ -601,7 +601,7 @@ class StockBot:
                 technical_chart = self.chart_generator.generate_technical_chart(symbol, period='1mo')
                 
                 if technical_chart:
-                    await query.message.reply_photo(
+                    query.message.reply_photo(
                         photo=technical_chart,
                         caption=f"📈 {symbol} 技術分析圖\n\n包含：RSI、MACD、布林通道、成交量分析"
                     )
@@ -619,37 +619,37 @@ class StockBot:
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
-                await query.edit_message_text(
+                query.edit_message_text(
                     f"✅ {symbol} 圖表已生成完成！\n\n上方是價格走勢圖，下方是技術分析圖。",
                     reply_markup=reply_markup
                 )
             else:
-                await query.edit_message_text(f"❌ 無法生成 {symbol} 的圖表，請稍後再試")
+                query.edit_message_text(f"❌ 無法生成 {symbol} 的圖表，請稍後再試")
                 
         except Exception as e:
             logger.error(f"Error in chart callback: {e}")
-            await query.edit_message_text("❌ 生成圖表時發生錯誤")
+            query.edit_message_text("❌ 生成圖表時發生錯誤")
     
-    async def chart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def chart_command(self, update: Update, context):
         """圖表命令"""
         if not context.args:
-            await update.message.reply_text("請輸入股票代碼，例如: /chart AAPL")
+            update.message.reply_text("請輸入股票代碼，例如: /chart AAPL")
             return
         
         symbol = context.args[0].upper()
         
         # 顯示載入訊息
-        loading_msg = await update.message.reply_text("📈 正在生成圖表...")
+        loading_msg = update.message.reply_text("📈 正在生成圖表...")
         
         try:
             # 生成價格走勢圖
             price_chart = self.chart_generator.generate_price_chart(symbol, period='1mo')
             
             if price_chart:
-                await loading_msg.delete()
+                loading_msg.delete()
                 
                 # 發送圖片
-                await update.message.reply_photo(
+                update.message.reply_photo(
                     photo=price_chart,
                     caption=f"📊 {symbol} 價格走勢圖 (1個月)\n\n包含：價格走勢、移動平均線、成交量"
                 )
@@ -658,35 +658,35 @@ class StockBot:
                 technical_chart = self.chart_generator.generate_technical_chart(symbol, period='1mo')
                 
                 if technical_chart:
-                    await update.message.reply_photo(
+                    update.message.reply_photo(
                         photo=technical_chart,
                         caption=f"📈 {symbol} 技術分析圖\n\n包含：RSI、MACD、布林通道、成交量分析"
                     )
             else:
-                await loading_msg.edit_text(f"❌ 無法生成 {symbol} 的圖表，請檢查股票代碼是否正確")
+                loading_msg.edit_text(f"❌ 無法生成 {symbol} 的圖表，請檢查股票代碼是否正確")
                 
         except Exception as e:
             logger.error(f"Error in chart command: {e}")
-            await loading_msg.edit_text("❌ 生成圖表時發生錯誤")
+            loading_msg.edit_text("❌ 生成圖表時發生錯誤")
     
-    async def compare_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def compare_command(self, update: Update, context):
         """股票比較命令"""
         if len(context.args) < 2:
-            await update.message.reply_text("請輸入至少兩個股票代碼，例如: /compare AAPL MSFT GOOGL")
+            update.message.reply_text("請輸入至少兩個股票代碼，例如: /compare AAPL MSFT GOOGL")
             return
         
         symbols = [arg.upper() for arg in context.args[:5]]  # 最多比較5支股票
         
-        loading_msg = await update.message.reply_text("📊 正在生成比較圖表...")
+        loading_msg = update.message.reply_text("📊 正在生成比較圖表...")
         
         try:
             # 生成比較圖
             comparison_chart = self.chart_generator.generate_comparison_chart(symbols, period='1mo')
             
             if comparison_chart:
-                await loading_msg.delete()
+                loading_msg.delete()
                 
-                await update.message.reply_photo(
+                update.message.reply_photo(
                     photo=comparison_chart,
                     caption=f"📊 股票表現比較圖\n\n比較股票: {', '.join(symbols)}\n\n標準化價格以第一天為基準 (100%)"
                 )
@@ -695,41 +695,42 @@ class StockBot:
                 heatmap_chart = self.chart_generator.generate_heatmap_chart(symbols, period='1mo')
                 
                 if heatmap_chart:
-                    await update.message.reply_photo(
+                    update.message.reply_photo(
                         photo=heatmap_chart,
                         caption=f"🔥 股票相關性熱力圖\n\n數值範圍：-1 (完全負相關) 到 +1 (完全正相關)"
                     )
             else:
-                await loading_msg.edit_text("❌ 無法生成比較圖表，請檢查股票代碼是否正確")
+                loading_msg.edit_text("❌ 無法生成比較圖表，請檢查股票代碼是否正確")
                 
         except Exception as e:
             logger.error(f"Error in compare command: {e}")
-            await loading_msg.edit_text("❌ 生成比較圖表時發生錯誤")
+            loading_msg.edit_text("❌ 生成比較圖表時發生錯誤")
     
     def run(self):
         """運行 Bot"""
-        # 建立應用程式
-        self.application = Application.builder().token(TELEGRAM_TOKEN).build()
+        # 建立 Updater
+        self.updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+        dispatcher = self.updater.dispatcher
         
         # 初始化警報系統
-        self.alert_system = AlertSystem(self.application.bot)
+        self.alert_system = AlertSystem(self.updater.bot)
         
         # 註冊命令處理器
-        self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CommandHandler("help", self.help_command))
-        self.application.add_handler(CommandHandler("stock", self.stock_command))
-        self.application.add_handler(CommandHandler("price", self.price_command))
-        self.application.add_handler(CommandHandler("watchlist", self.watchlist_command))
-        self.application.add_handler(CommandHandler("add", self.add_command))
-        self.application.add_handler(CommandHandler("remove", self.remove_command))
-        self.application.add_handler(CommandHandler("alerts", self.alerts_command))
-        self.application.add_handler(CommandHandler("personality", self.personality_command))
-        self.application.add_handler(CommandHandler("strategy", self.strategy_command))
-        self.application.add_handler(CommandHandler("chart", self.chart_command))
-        self.application.add_handler(CommandHandler("compare", self.compare_command))
+        dispatcher.add_handler(CommandHandler("start", self.start))
+        dispatcher.add_handler(CommandHandler("help", self.help_command))
+        dispatcher.add_handler(CommandHandler("stock", self.stock_command))
+        dispatcher.add_handler(CommandHandler("price", self.price_command))
+        dispatcher.add_handler(CommandHandler("watchlist", self.watchlist_command))
+        dispatcher.add_handler(CommandHandler("add", self.add_command))
+        dispatcher.add_handler(CommandHandler("remove", self.remove_command))
+        dispatcher.add_handler(CommandHandler("alerts", self.alerts_command))
+        dispatcher.add_handler(CommandHandler("personality", self.personality_command))
+        dispatcher.add_handler(CommandHandler("strategy", self.strategy_command))
+        dispatcher.add_handler(CommandHandler("chart", self.chart_command))
+        dispatcher.add_handler(CommandHandler("compare", self.compare_command))
         
         # 註冊按鈕回調處理器
-        self.application.add_handler(CallbackQueryHandler(self.button_callback))
+        dispatcher.add_handler(CallbackQueryHandler(self.button_callback))
         
         # 啟動 Bot
         logger.info("Starting Stock Bot...")
@@ -737,22 +738,24 @@ class StockBot:
         # 檢查是否使用 webhook（雲端部署）
         if WEBHOOK_URL:
             logger.info(f"Using webhook: {WEBHOOK_URL}")
-            self.application.run_webhook(
+            self.updater.start_webhook(
                 listen="0.0.0.0",
                 port=PORT,
-                webhook_url=WEBHOOK_URL,
-                secret_token=None
+                url_path=TELEGRAM_TOKEN,
+                webhook_url=WEBHOOK_URL + TELEGRAM_TOKEN
             )
         else:
             # 檢查是否在雲端環境（Render/Heroku 等）
             if os.getenv('RENDER') or os.getenv('HEROKU') or os.getenv('PORT'):
                 # 在雲端環境使用 webhook，但沒有設定 WEBHOOK_URL
                 logger.info("Detected cloud environment, using polling mode")
-                # 使用 polling 模式，但設定為 webhook 準備
-                self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+                self.updater.start_polling()
             else:
                 logger.info("Using polling mode")
-                self.application.run_polling()
+                self.updater.start_polling()
+        
+        # 保持運行
+        self.updater.idle()
 
 if __name__ == "__main__":
     bot = StockBot()
