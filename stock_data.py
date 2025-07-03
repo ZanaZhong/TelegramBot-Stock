@@ -4,19 +4,104 @@ import numpy as np
 import ta
 from datetime import datetime, timedelta
 import logging
+import time
+import random
 from config import *
 
 class StockDataManager:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.last_request_time = 0
+        self.min_request_interval = 2.0  # 增加最小請求間隔（秒）
+        self.max_retries = 3
+        self.retry_delay = 5.0  # 增加重試延遲（秒）
+        
+        # 快取機制
+        self.cache = {}
+        self.cache_duration = 120  # 增加快取時間（秒）
+    
+    def _rate_limit(self):
+        """實施速率限制"""
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        
+        if time_since_last < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last
+            # 添加隨機延遲以避免同時請求
+            sleep_time += random.uniform(0.1, 0.5)
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+    
+    def _get_cache_key(self, symbol, data_type, **kwargs):
+        """生成快取鍵"""
+        key_parts = [symbol, data_type]
+        for k, v in sorted(kwargs.items()):
+            key_parts.append(f"{k}_{v}")
+        return "_".join(key_parts)
+    
+    def _get_from_cache(self, cache_key):
+        """從快取取得資料"""
+        if cache_key in self.cache:
+            data, timestamp = self.cache[cache_key]
+            if time.time() - timestamp < self.cache_duration:
+                return data
+            else:
+                # 過期，移除
+                del self.cache[cache_key]
+        return None
+    
+    def _set_cache(self, cache_key, data):
+        """設定快取"""
+        self.cache[cache_key] = (data, time.time())
+        
+        # 清理過期的快取項目
+        current_time = time.time()
+        expired_keys = [
+            key for key, (_, timestamp) in self.cache.items()
+            if current_time - timestamp > self.cache_duration
+        ]
+        for key in expired_keys:
+            del self.cache[key]
+    
+    def _make_request_with_retry(self, func, *args, **kwargs):
+        """帶重試機制的請求"""
+        for attempt in range(self.max_retries):
+            try:
+                self._rate_limit()
+                return func(*args, **kwargs)
+            except Exception as e:
+                if "429" in str(e) or "Too Many Requests" in str(e):
+                    self.logger.warning(f"Rate limit hit, attempt {attempt + 1}/{self.max_retries}")
+                    if attempt < self.max_retries - 1:
+                        # 指數退避
+                        delay = self.retry_delay * (2 ** attempt)
+                        time.sleep(delay)
+                        continue
+                else:
+                    self.logger.error(f"Request failed: {e}")
+                break
+        return None
     
     def get_stock_info(self, symbol):
         """取得股票基本資訊"""
         try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
+            cache_key = self._get_cache_key(symbol, "info")
+            cached_data = self._get_from_cache(cache_key)
+            if cached_data:
+                return cached_data
             
-            return {
+            def _get_info():
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                return info
+            
+            info = self._make_request_with_retry(_get_info)
+            
+            if info is None:
+                return None
+            
+            result = {
                 'symbol': symbol,
                 'name': info.get('longName', symbol),
                 'sector': info.get('sector', 'N/A'),
@@ -26,6 +111,10 @@ class StockDataManager:
                 'dividend_yield': info.get('dividendYield', 0),
                 'beta': info.get('beta', 0)
             }
+            
+            self._set_cache(cache_key, result)
+            return result
+            
         except Exception as e:
             self.logger.error(f"Error getting stock info for {symbol}: {e}")
             return None
@@ -33,14 +122,28 @@ class StockDataManager:
     def get_current_price(self, symbol):
         """取得即時股價"""
         try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period='1d')
+            cache_key = self._get_cache_key(symbol, "price")
+            cached_data = self._get_from_cache(cache_key)
+            if cached_data:
+                return cached_data
             
-            if hist.empty:
-                return None
+            def _get_price():
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period='1d')
+                return hist
+            
+            hist = self._make_request_with_retry(_get_price)
+            
+            if hist is None or hist.empty:
+                # 嘗試使用更長的期間作為備用
+                self.logger.info(f"Trying fallback for {symbol}")
+                hist = self._make_request_with_retry(lambda: yf.Ticker(symbol).history(period='5d'))
+                
+                if hist is None or hist.empty:
+                    return None
             
             latest = hist.iloc[-1]
-            return {
+            result = {
                 'symbol': symbol,
                 'price': float(latest['Close']),
                 'volume': int(latest['Volume']),
@@ -51,6 +154,10 @@ class StockDataManager:
                 'open': float(latest['Open']),
                 'timestamp': datetime.now()
             }
+            
+            self._set_cache(cache_key, result)
+            return result
+            
         except Exception as e:
             self.logger.error(f"Error getting current price for {symbol}: {e}")
             return None
@@ -58,13 +165,24 @@ class StockDataManager:
     def get_historical_data(self, symbol, period='1mo', interval='1d'):
         """取得歷史股價資料"""
         try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period=period, interval=interval)
+            cache_key = self._get_cache_key(symbol, "history", period=period, interval=interval)
+            cached_data = self._get_from_cache(cache_key)
+            if cached_data:
+                return cached_data
             
-            if hist.empty:
+            def _get_history():
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period=period, interval=interval)
+                return hist
+            
+            hist = self._make_request_with_retry(_get_history)
+            
+            if hist is None or hist.empty:
                 return None
             
+            self._set_cache(cache_key, hist)
             return hist
+            
         except Exception as e:
             self.logger.error(f"Error getting historical data for {symbol}: {e}")
             return None
